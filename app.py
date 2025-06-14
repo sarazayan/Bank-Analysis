@@ -4,13 +4,33 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, confusion_matrix
-import requests
-import json
+import warnings
+warnings.filterwarnings('ignore')
+
+# Import ML libraries
+try:
+    from sklearn.model_selection import train_test_split
+    from sklearn.ensemble import RandomForestClassifier
+    from sklearn.metrics import classification_report, confusion_matrix
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    st.warning("Scikit-learn not available. ML features will be disabled.")
+
+# Import plotting libraries
+try:
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    SEABORN_AVAILABLE = True
+except ImportError:
+    SEABORN_AVAILABLE = False
+
+# Import requests for future API integration
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
 
 # Configure page
 st.set_page_config(
@@ -87,7 +107,10 @@ def generate_bank_data(n_records=10000):
     df['is_fraud'] = np.random.choice([0, 1], n_records, p=[0.95, 0.05])
     
     # Adjust amounts for fraud cases
-    df.loc[df['is_fraud'] == 1, 'amount'] *= np.random.uniform(2, 10, sum(df['is_fraud']))
+    fraud_indices = df['is_fraud'] == 1
+    if fraud_indices.any():
+        multipliers = np.random.uniform(2, 10, fraud_indices.sum())
+        df.loc[fraud_indices, 'amount'] *= multipliers
     
     # Clean data
     df['amount'] = df['amount'].round(2)
@@ -103,22 +126,36 @@ def generate_bank_data(n_records=10000):
     # Remove any potential NaN values
     df = df.dropna()
     
+    # Verify data integrity
+    if len(df) == 0:
+        raise ValueError("No valid data generated")
+    
     return df
 
 # Initialize session state
 if 'data' not in st.session_state:
-    st.session_state.data = generate_bank_data()
+    try:
+        st.session_state.data = generate_bank_data()
+    except Exception as e:
+        st.error(f"Error initializing data: {str(e)}")
+        st.stop()
 
 # Sidebar controls
 st.sidebar.subheader("Data Controls")
 if st.sidebar.button("🔄 Regenerate Data"):
-    st.session_state.data = generate_bank_data()
-    st.rerun()
+    try:
+        st.session_state.data = generate_bank_data()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Error generating data: {str(e)}")
 
 n_records = st.sidebar.slider("Number of Records", 1000, 50000, 10000)
 if st.sidebar.button("📊 Update Dataset Size"):
-    st.session_state.data = generate_bank_data(n_records)
-    st.rerun()
+    try:
+        st.session_state.data = generate_bank_data(n_records)
+        st.rerun()
+    except Exception as e:
+        st.error(f"Error updating dataset: {str(e)}")
 
 # Main content tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Overview", "🔧 Data Engineering", "📈 Analysis", "🤖 ML Models", "🧠 LLM Insights"])
@@ -126,6 +163,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Overview", "🔧 Data Engineering"
 # Tab 1: Overview
 with tab1:
     st.header("Data Overview")
+    
+    if 'data' not in st.session_state or st.session_state.data is None:
+        st.error("No data available. Please regenerate data.")
+        st.stop()
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -244,37 +285,54 @@ with tab3:
     # Transaction volume over time
     st.subheader("1. Transaction Volume Analysis")
     
-    daily_volume = st.session_state.data.groupby(st.session_state.data['transaction_date'].dt.date).agg({
-        'amount': ['sum', 'count', 'mean']
-    }).round(2)
-    daily_volume.columns = ['Total_Amount', 'Count', 'Avg_Amount']
-    daily_volume = daily_volume.reset_index()
-    
-    fig = px.line(daily_volume, x='transaction_date', y='Total_Amount', 
-                  title='Daily Transaction Volume')
-    st.plotly_chart(fig, use_container_width=True)
+    try:
+        daily_volume = st.session_state.data.groupby(st.session_state.data['transaction_date'].dt.date).agg({
+            'amount': ['sum', 'count', 'mean']
+        }).round(2)
+        daily_volume.columns = ['Total_Amount', 'Count', 'Avg_Amount']
+        daily_volume = daily_volume.reset_index()
+        
+        fig = px.line(daily_volume, x='transaction_date', y='Total_Amount', 
+                      title='Daily Transaction Volume',
+                      labels={'transaction_date': 'Date', 'Total_Amount': 'Total Amount ($)'})
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating transaction volume chart: {str(e)}")
+        st.write("Sample data:")
+        st.dataframe(st.session_state.data[['transaction_date', 'amount']].head())
     
     # Distribution analysis
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("2. Amount Distribution")
-        # Clean data for plotting
-        clean_data = st.session_state.data.dropna(subset=['amount'])
-        clean_data = clean_data[clean_data['amount'] > 0]  # Remove negative/zero amounts
-        clean_data = clean_data[clean_data['amount'] < clean_data['amount'].quantile(0.99)]  # Remove extreme outliers
-        
-        fig = px.histogram(clean_data, x='amount', nbins=50, 
-                          title='Transaction Amount Distribution')
-        fig.update_xaxis(title='Amount ($)')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            # Clean data for plotting
+            clean_data = st.session_state.data.dropna(subset=['amount'])
+            clean_data = clean_data[clean_data['amount'] > 0]  # Remove negative/zero amounts
+            clean_data = clean_data[clean_data['amount'] < clean_data['amount'].quantile(0.99)]  # Remove extreme outliers
+            
+            fig = px.histogram(clean_data, x='amount', nbins=50, 
+                              title='Transaction Amount Distribution',
+                              labels={'amount': 'Amount ($)', 'count': 'Count'})
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error creating histogram: {str(e)}")
+            st.write("Amount statistics:")
+            st.write(st.session_state.data['amount'].describe())
     
     with col2:
         st.subheader("3. Transaction by Channel")
-        channel_counts = st.session_state.data['channel'].value_counts()
-        fig = px.pie(values=channel_counts.values, names=channel_counts.index,
-                    title='Transactions by Channel')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            channel_counts = st.session_state.data['channel'].value_counts()
+            fig = px.pie(values=channel_counts.values, names=channel_counts.index,
+                        title='Transactions by Channel',
+                        labels={'names': 'Channel', 'values': 'Count'})
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error creating pie chart: {str(e)}")
+            st.write("Channel counts:")
+            st.write(st.session_state.data['channel'].value_counts())
     
     # Fraud analysis
     st.subheader("4. Fraud Analysis")
@@ -287,32 +345,49 @@ with tab3:
         st.dataframe(fraud_by_type)
     
     with col2:
-        # Clean data for box plot
-        clean_data = st.session_state.data.dropna(subset=['amount', 'is_fraud'])
-        clean_data = clean_data[clean_data['amount'] > 0]
-        clean_data = clean_data[clean_data['amount'] < clean_data['amount'].quantile(0.95)]  # Remove extreme outliers
-        
-        fig = px.box(clean_data, x='is_fraud', y='amount', 
-                    title='Amount Distribution: Fraud vs Normal')
-        fig.update_xaxis(title='Is Fraud (0=No, 1=Yes)')
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            # Clean data for box plot
+            clean_data = st.session_state.data.dropna(subset=['amount', 'is_fraud'])
+            clean_data = clean_data[clean_data['amount'] > 0]
+            clean_data = clean_data[clean_data['amount'] < clean_data['amount'].quantile(0.95)]  # Remove extreme outliers
+            
+            fig = px.box(clean_data, x='is_fraud', y='amount', 
+                        title='Amount Distribution: Fraud vs Normal',
+                        labels={'is_fraud': 'Is Fraud (0=No, 1=Yes)', 'amount': 'Amount ($)'})
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error creating box plot: {str(e)}")
+            st.write("Fraud vs Normal stats:")
+            st.write(st.session_state.data.groupby('is_fraud')['amount'].describe())
     
     # Correlation analysis
     st.subheader("5. Correlation Analysis")
-    numeric_cols = ['amount', 'balance', 'credit_score', 'age', 'annual_income', 'is_fraud']
-    # Ensure all columns exist and are numeric
-    available_cols = [col for col in numeric_cols if col in st.session_state.data.columns]
-    corr_data = st.session_state.data[available_cols].select_dtypes(include=[np.number])
-    corr_matrix = corr_data.corr()
-    
-    fig = px.imshow(corr_matrix, text_auto=True, aspect="auto",
-                   title='Correlation Matrix of Key Variables',
-                   color_continuous_scale='RdBu_r')
-    st.plotly_chart(fig, use_container_width=True)
+    try:
+        numeric_cols = ['amount', 'balance', 'credit_score', 'age', 'annual_income', 'is_fraud']
+        # Ensure all columns exist and are numeric
+        available_cols = [col for col in numeric_cols if col in st.session_state.data.columns]
+        corr_data = st.session_state.data[available_cols].select_dtypes(include=[np.number])
+        corr_matrix = corr_data.corr()
+        
+        fig = px.imshow(corr_matrix, text_auto=True, aspect="auto",
+                       title='Correlation Matrix of Key Variables',
+                       color_continuous_scale='RdBu_r',
+                       labels=dict(x="Variables", y="Variables", color="Correlation"))
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error creating correlation matrix: {str(e)}")
+        st.write("Available numeric columns:")
+        numeric_data = st.session_state.data.select_dtypes(include=[np.number])
+        st.write(list(numeric_data.columns))
 
 # Tab 4: ML Models
 with tab4:
     st.header("Machine Learning Models")
+    
+    if not SKLEARN_AVAILABLE:
+        st.error("Scikit-learn is not available. Please install it to use ML features.")
+        st.code("pip install scikit-learn")
+        st.stop()
     
     st.subheader("1. Fraud Detection Model")
     
@@ -358,7 +433,7 @@ with tab4:
                 st.write("**Confusion Matrix:**")
                 cm = confusion_matrix(y_test, y_pred)
                 fig = px.imshow(cm, text_auto=True, aspect="auto",
-                               labels=dict(x="Predicted", y="Actual"),
+                               labels=dict(x="Predicted", y="Actual", color="Count"),
                                title="Confusion Matrix")
                 st.plotly_chart(fig, use_container_width=True)
             
@@ -370,7 +445,8 @@ with tab4:
             }).sort_values('importance', ascending=False).head(15)
             
             fig = px.bar(feature_importance, x='importance', y='feature', 
-                        orientation='h', title='Top 15 Feature Importances')
+                        orientation='h', title='Top 15 Feature Importances',
+                        labels={'importance': 'Importance Score', 'feature': 'Features'})
             st.plotly_chart(fig, use_container_width=True)
     
     # Model interpretation
