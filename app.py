@@ -95,6 +95,14 @@ def generate_bank_data(n_records=10000):
     df['annual_income'] = df['annual_income'].round(2)
     df['credit_score'] = df['credit_score'].clip(300, 850)
     
+    # Ensure no negative amounts or balances
+    df['amount'] = df['amount'].abs()
+    df['balance'] = df['balance'].clip(lower=0)
+    df['annual_income'] = df['annual_income'].abs()
+    
+    # Remove any potential NaN values
+    df = df.dropna()
+    
     return df
 
 # Initialize session state
@@ -251,7 +259,12 @@ with tab3:
     
     with col1:
         st.subheader("2. Amount Distribution")
-        fig = px.histogram(st.session_state.data, x='amount', bins=50, 
+        # Clean data for plotting
+        clean_data = st.session_state.data.dropna(subset=['amount'])
+        clean_data = clean_data[clean_data['amount'] > 0]  # Remove negative/zero amounts
+        clean_data = clean_data[clean_data['amount'] < clean_data['amount'].quantile(0.99)]  # Remove extreme outliers
+        
+        fig = px.histogram(clean_data, x='amount', nbins=50, 
                           title='Transaction Amount Distribution')
         fig.update_xaxis(title='Amount ($)')
         st.plotly_chart(fig, use_container_width=True)
@@ -274,7 +287,12 @@ with tab3:
         st.dataframe(fraud_by_type)
     
     with col2:
-        fig = px.box(st.session_state.data, x='is_fraud', y='amount', 
+        # Clean data for box plot
+        clean_data = st.session_state.data.dropna(subset=['amount', 'is_fraud'])
+        clean_data = clean_data[clean_data['amount'] > 0]
+        clean_data = clean_data[clean_data['amount'] < clean_data['amount'].quantile(0.95)]  # Remove extreme outliers
+        
+        fig = px.box(clean_data, x='is_fraud', y='amount', 
                     title='Amount Distribution: Fraud vs Normal')
         fig.update_xaxis(title='Is Fraud (0=No, 1=Yes)')
         st.plotly_chart(fig, use_container_width=True)
@@ -282,10 +300,14 @@ with tab3:
     # Correlation analysis
     st.subheader("5. Correlation Analysis")
     numeric_cols = ['amount', 'balance', 'credit_score', 'age', 'annual_income', 'is_fraud']
-    corr_matrix = st.session_state.data[numeric_cols].corr()
+    # Ensure all columns exist and are numeric
+    available_cols = [col for col in numeric_cols if col in st.session_state.data.columns]
+    corr_data = st.session_state.data[available_cols].select_dtypes(include=[np.number])
+    corr_matrix = corr_data.corr()
     
     fig = px.imshow(corr_matrix, text_auto=True, aspect="auto",
-                   title='Correlation Matrix of Key Variables')
+                   title='Correlation Matrix of Key Variables',
+                   color_continuous_scale='RdBu_r')
     st.plotly_chart(fig, use_container_width=True)
 
 # Tab 4: ML Models
